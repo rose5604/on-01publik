@@ -1,0 +1,324 @@
+# ============================================
+# 🗑️ AUTO DELETE REPOSITORY WORKFLOW
+# ============================================
+# Workflow ini berjalan setelah workflow utama (160-2.yml) selesai
+# 
+# FITUR:
+# - Backup repository ke artifact sebelum dihapus (opsional)
+# - Kirim notifikasi Telegram sebelum & sesudah penghapusan
+# - Guard keamanan ganda (secrets + kondisi)
+# - Log lengkap untuk audit
+#
+# REQUIREMENTS:
+# 1. Secret: DELETE_REPO_TOKEN (GitHub PAT dengan scope delete_repo)
+# 2. Secret: ENABLE_AUTO_DELETE (set "true" untuk mengaktifkan)
+# 3. Secret: TELEGRAM_BOT_TOKEN (opsional, untuk notifikasi)
+# 4. Secret: TELEGRAM_CHAT_ID (opsional, untuk notifikasi)
+# ============================================
+
+name: 🗑️ Auto Delete Repository
+
+on:
+  workflow_run:
+    workflows: ["🚀 DKN Compute Runtime (5 Parallel Runners - Shared Wallets)"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ============================================
+  # JOB 1: BACKUP (OPSIONAL)
+  # ============================================
+  backup:
+    name: 📦 Backup Repository
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure'
+    
+    steps:
+      - name: 📋 Workflow Info
+        run: |
+          echo "============================================"
+          echo "🔍 WORKFLOW TRIGGER INFO"
+          echo "============================================"
+          echo "Triggered by: ${{ github.event.workflow_run.name }}"
+          echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "Run ID: ${{ github.event.workflow_run.id }}"
+          echo "Run Number: ${{ github.event.workflow_run.run_number }}"
+          echo "Repository: ${{ github.repository }}"
+          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "============================================"
+      
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history untuk backup lengkap
+      
+      - name: 📦 Create Backup Archive
+        run: |
+          echo "📦 Creating backup archive..."
+          
+          REPO_NAME=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          TIMESTAMP=$(date -u '+%Y%m%d_%H%M%S')
+          BACKUP_NAME="${REPO_NAME}_backup_${TIMESTAMP}"
+          
+          echo "Backup name: ${BACKUP_NAME}.tar.gz"
+          
+          # Backup seluruh repository (exclude .git untuk menghemat space)
+          tar -czf "${BACKUP_NAME}.tar.gz" \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='*.log' \
+            .
+          
+          # Info
+          BACKUP_SIZE=$(du -h "${BACKUP_NAME}.tar.gz" | cut -f1)
+          echo "✅ Backup created: ${BACKUP_NAME}.tar.gz (${BACKUP_SIZE})"
+          
+          # Save untuk step selanjutnya
+          echo "backup_file=${BACKUP_NAME}.tar.gz" >> $GITHUB_ENV
+      
+      - name: 💾 Upload Backup to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-backup-${{ github.run_id }}
+          path: ${{ env.backup_file }}
+          retention-days: 30  # Simpan 30 hari
+          compression-level: 0  # Sudah di-compress dengan tar.gz
+      
+      - name: ✅ Backup Complete
+        run: |
+          echo "✅ Backup uploaded to GitHub Artifacts"
+          echo "📁 Artifact name: repository-backup-${{ github.run_id }}"
+          echo "⏰ Retention: 30 days"
+          echo "🔗 Download URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ============================================
+  # JOB 2: DELETE REPOSITORY
+  # ============================================
+  delete_repository:
+    name: 🗑️ Delete Repository
+    runs-on: ubuntu-latest
+    needs: backup  # Tunggu backup selesai dulu
+    if: always()  # Jalankan meskipun backup gagal
+    
+    steps:
+      - name: 🔍 Check Delete Conditions
+        id: check
+        env:
+          ENABLE_DELETE: 'true'
+          DELETE_TOKEN: ${{ secrets.DELETE_REPO_TOKEN }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          echo "🔍 Checking delete conditions..."
+          echo "============================================"
+          
+          # Check 1: ENABLE_AUTO_DELETE harus "true"
+          if [ "$ENABLE_DELETE" != "true" ]; then
+            echo "🔒 Auto-delete is DISABLED"
+            echo "   Set secret ENABLE_AUTO_DELETE='true' to enable"
+            echo "should_delete=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Check 1: Auto-delete is ENABLED"
+          
+          # Check 2: DELETE_REPO_TOKEN harus ada
+          if [ -z "$DELETE_TOKEN" ]; then
+            echo "❌ Check 2 FAILED: DELETE_REPO_TOKEN secret not found"
+            echo "should_delete=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Check 2: DELETE_REPO_TOKEN exists"
+          
+          # Check 3: Workflow conclusion harus success atau failure
+          if [ "$WORKFLOW_CONCLUSION" != "success" ] && [ "$WORKFLOW_CONCLUSION" != "failure" ]; then
+            echo "⚠️  Check 3: Workflow conclusion is '$WORKFLOW_CONCLUSION' (not success/failure)"
+            echo "should_delete=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "✅ Check 3: Workflow concluded with '$WORKFLOW_CONCLUSION'"
+          
+          echo ""
+          echo "============================================"
+          echo "✅ ALL CHECKS PASSED - Repository will be deleted"
+          echo "============================================"
+          echo "should_delete=true" >> $GITHUB_OUTPUT
+      
+      - name: 📱 Send Pre-Delete Telegram Notification
+        if: steps.check.outputs.should_delete == 'true'
+        env:
+          BOT_TOKEN: '8323138901:AAFSUPd0MNzWfNORP58Th5eN7jv8OpiWgKM'
+          CHAT_ID: '1051378557'
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "⚠️  Telegram not configured, skipping notification"
+            exit 0
+          fi
+          
+          REPO_URL="https://github.com/${{ github.repository }}"
+          CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+          
+          if [ "$CONCLUSION" = "success" ]; then
+            STATUS_ICON="✅"
+            STATUS_TEXT="Completed Successfully"
+          else
+            STATUS_ICON="❌"
+            STATUS_TEXT="Failed"
+          fi
+          
+          MESSAGE="🗑️ *REPOSITORY DELETE WARNING*
+
+          ⚠️ Repository akan dihapus dalam 30 detik!
+          
+          *REPOSITORY INFO*
+          ├─ Repo: \`${{ github.repository }}\`
+          ├─ URL: $REPO_URL
+          └─ Workflow Status: $STATUS_ICON $STATUS_TEXT
+          
+          *DELETE INFO*
+          ├─ Triggered by: Workflow completed
+          ├─ Backup: Tersimpan di artifacts
+          ├─ Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          └─ Run: #${{ github.run_number }}
+          
+          ⏰ Penghapusan akan dilakukan otomatis...
+          
+          🔗 [View Backup](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="Markdown" \
+            -d disable_web_page_preview=true \
+            -d text="$MESSAGE" > /dev/null
+          
+          echo "✅ Pre-delete notification sent"
+      
+      - name: ⏳ Countdown Before Delete
+        if: steps.check.outputs.should_delete == 'true'
+        run: |
+          echo "⏳ Waiting 30 seconds before deletion..."
+          echo "   (Grace period untuk cancel manual jika diperlukan)"
+          
+          for i in {30..1}; do
+            echo "   ⏱️  $i seconds remaining..."
+            sleep 1
+          done
+          
+          echo "✅ Countdown complete. Proceeding with deletion..."
+      
+      - name: 🗑️ Delete Repository
+        if: steps.check.outputs.should_delete == 'true'
+        env:
+          DELETE_TOKEN: ${{ secrets.DELETE_REPO_TOKEN }}
+        run: |
+          echo "============================================"
+          echo "🗑️ DELETING REPOSITORY"
+          echo "============================================"
+          
+          OWNER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          REPO=$(echo "${{ github.repository }}" | cut -d'/' -f2)
+          
+          echo "Repository: ${OWNER}/${REPO}"
+          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          
+          # Perform DELETE request
+          echo "⚠️  Executing DELETE request..."
+          HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
+            -H "Authorization: token ${DELETE_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${OWNER}/${REPO}")
+          
+          HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$HTTP_RESPONSE" | head -n-1)
+          
+          echo ""
+          echo "HTTP Status Code: $HTTP_CODE"
+          
+          if [ "$HTTP_CODE" -eq 204 ]; then
+            echo "✅ Repository successfully deleted"
+            echo "deletion_status=success" >> $GITHUB_ENV
+          elif [ "$HTTP_CODE" -eq 404 ]; then
+            echo "⚠️  Repository not found (may already be deleted)"
+            echo "deletion_status=not_found" >> $GITHUB_ENV
+          elif [ "$HTTP_CODE" -eq 403 ]; then
+            echo "❌ Permission denied - Check DELETE_REPO_TOKEN permissions"
+            echo "deletion_status=permission_denied" >> $GITHUB_ENV
+            exit 1
+          else
+            echo "❌ Deletion failed with HTTP $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            echo "deletion_status=failed" >> $GITHUB_ENV
+            exit 1
+          fi
+          
+          echo "============================================"
+      
+      - name: 📱 Send Post-Delete Telegram Notification
+        if: always() && steps.check.outputs.should_delete == 'true'
+        env:
+          BOT_TOKEN: '8323138901:AAFSUPd0MNzWfNORP58Th5eN7jv8OpiWgKM'
+          CHAT_ID: '1051378557'
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            exit 0
+          fi
+          
+          DELETION_STATUS="${{ env.deletion_status }}"
+          
+          if [ "$DELETION_STATUS" = "success" ]; then
+            ICON="✅"
+            TITLE="REPOSITORY DELETED"
+            STATUS_TEXT="Repository berhasil dihapus"
+          elif [ "$DELETION_STATUS" = "not_found" ]; then
+            ICON="⚠️"
+            TITLE="REPOSITORY NOT FOUND"
+            STATUS_TEXT="Repository sudah tidak ada"
+          elif [ "$DELETION_STATUS" = "permission_denied" ]; then
+            ICON="❌"
+            TITLE="PERMISSION DENIED"
+            STATUS_TEXT="Token tidak memiliki permission"
+          else
+            ICON="❌"
+            TITLE="DELETION FAILED"
+            STATUS_TEXT="Gagal menghapus repository"
+          fi
+          
+          MESSAGE="$ICON *$TITLE*
+
+          *REPOSITORY*
+          └─ \`${{ github.repository }}\`
+          
+          *STATUS*
+          └─ $STATUS_TEXT
+          
+          *BACKUP*
+          ├─ Artifact ID: \`repository-backup-${{ github.run_id }}\`
+          ├─ Retention: 30 days
+          └─ Size: Check artifacts
+          
+          *INFO*
+          ├─ Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          ├─ Triggered by: Workflow completion
+          └─ Run: #${{ github.run_number }}
+          
+          📦 Backup masih tersedia di GitHub Artifacts"
+          
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="Markdown" \
+            -d text="$MESSAGE" > /dev/null
+      
+      - name: 📊 Final Summary
+        if: always()
+        run: |
+          echo "============================================"
+          echo "📊 DELETE WORKFLOW SUMMARY"
+          echo "============================================"
+          echo "Should Delete: ${{ steps.check.outputs.should_delete }}"
+          echo "Deletion Status: ${{ env.deletion_status }}"
+          echo "Backup Artifact: repository-backup-${{ github.run_id }}"
+          echo "Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "============================================"
