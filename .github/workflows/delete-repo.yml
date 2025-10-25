@@ -20,7 +20,7 @@ name: 🗑️ Auto Delete Repository
 
 on:
   workflow_run:
-    workflows: ["🚀 DKN Compute Runtime (5 Parallel Runners - Shared Wallets)"]
+    workflows: ["🚀 160 x 4"]
     types:
       - completed
 
