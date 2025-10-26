@@ -4,6 +4,7 @@
 # Workflow ini berjalan setelah workflow utama (160-2.yml) selesai
 # 
 # FITUR:
+# - Support untuk conclusion: success, failure, DAN cancelled
 # - Backup repository ke artifact sebelum dihapus (opsional)
 # - Kirim notifikasi Telegram sebelum & sesudah penghapusan
 # - Guard keamanan ganda (secrets + kondisi)
@@ -20,7 +21,7 @@ name: 🗑️ Auto Delete Repository
 
 on:
   workflow_run:
-    workflows: ["🚀 160 x 4"]
+    workflows: ["🚀 DKN Compute Runtime (5 Parallel Runners - Shared Wallets)"]
     types:
       - completed
 
@@ -35,6 +36,7 @@ jobs:
   backup:
     name: 📦 Backup Repository
     runs-on: ubuntu-latest
+    # UPDATE: Tambahkan kondisi cancelled
     if: |
       github.event.workflow_run.conclusion == 'success' || 
       github.event.workflow_run.conclusion == 'failure' || 
@@ -135,9 +137,12 @@ jobs:
           fi
           echo "✅ Check 2: DELETE_REPO_TOKEN exists"
           
-          # Check 3: Workflow conclusion harus success atau failure
-          if [ "$WORKFLOW_CONCLUSION" != "success" ] && [ "$WORKFLOW_CONCLUSION" != "failure" ]; then
-            echo "⚠️  Check 3: Workflow conclusion is '$WORKFLOW_CONCLUSION' (not success/failure)"
+          # Check 3: Workflow conclusion (UPDATE: tambahkan cancelled)
+          if [ "$WORKFLOW_CONCLUSION" != "success" ] && \
+             [ "$WORKFLOW_CONCLUSION" != "failure" ] && \
+             [ "$WORKFLOW_CONCLUSION" != "cancelled" ]; then
+            echo "⚠️  Check 3: Workflow conclusion is '$WORKFLOW_CONCLUSION'"
+            echo "   Expected: success, failure, or cancelled"
             echo "should_delete=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -163,12 +168,19 @@ jobs:
           REPO_URL="https://github.com/${{ github.repository }}"
           CONCLUSION="${{ github.event.workflow_run.conclusion }}"
           
+          # UPDATE: Tambahkan handling untuk cancelled
           if [ "$CONCLUSION" = "success" ]; then
             STATUS_ICON="✅"
             STATUS_TEXT="Completed Successfully"
-          else
+          elif [ "$CONCLUSION" = "failure" ]; then
             STATUS_ICON="❌"
             STATUS_TEXT="Failed"
+          elif [ "$CONCLUSION" = "cancelled" ]; then
+            STATUS_ICON="🚫"
+            STATUS_TEXT="Cancelled"
+          else
+            STATUS_ICON="⚠️"
+            STATUS_TEXT="Unknown ($CONCLUSION)"
           fi
           
           MESSAGE="🗑️ *REPOSITORY DELETE WARNING*
@@ -182,6 +194,7 @@ jobs:
           
           *DELETE INFO*
           ├─ Triggered by: Workflow completed
+          ├─ Conclusion: $CONCLUSION
           ├─ Backup: Tersimpan di artifacts
           ├─ Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           └─ Run: #${{ github.run_number }}
@@ -270,6 +283,7 @@ jobs:
           fi
           
           DELETION_STATUS="${{ env.deletion_status }}"
+          WORKFLOW_CONCLUSION="${{ github.event.workflow_run.conclusion }}"
           
           if [ "$DELETION_STATUS" = "success" ]; then
             ICON="✅"
@@ -289,13 +303,25 @@ jobs:
             STATUS_TEXT="Gagal menghapus repository"
           fi
           
+          # UPDATE: Tambahkan info conclusion di notifikasi
+          if [ "$WORKFLOW_CONCLUSION" = "success" ]; then
+            WORKFLOW_STATUS="✅ Success"
+          elif [ "$WORKFLOW_CONCLUSION" = "failure" ]; then
+            WORKFLOW_STATUS="❌ Failed"
+          elif [ "$WORKFLOW_CONCLUSION" = "cancelled" ]; then
+            WORKFLOW_STATUS="🚫 Cancelled"
+          else
+            WORKFLOW_STATUS="⚠️ $WORKFLOW_CONCLUSION"
+          fi
+          
           MESSAGE="$ICON *$TITLE*
 
           *REPOSITORY*
           └─ \`${{ github.repository }}\`
           
           *STATUS*
-          └─ $STATUS_TEXT
+          ├─ Delete: $STATUS_TEXT
+          └─ Workflow: $WORKFLOW_STATUS
           
           *BACKUP*
           ├─ Artifact ID: \`repository-backup-${{ github.run_id }}\`
@@ -320,6 +346,7 @@ jobs:
           echo "============================================"
           echo "📊 DELETE WORKFLOW SUMMARY"
           echo "============================================"
+          echo "Workflow Conclusion: ${{ github.event.workflow_run.conclusion }}"
           echo "Should Delete: ${{ steps.check.outputs.should_delete }}"
           echo "Deletion Status: ${{ env.deletion_status }}"
           echo "Backup Artifact: repository-backup-${{ github.run_id }}"
