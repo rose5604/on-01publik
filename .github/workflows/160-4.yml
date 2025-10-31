@@ -511,24 +511,24 @@ jobs:
           
           echo "Runtime: $RUNTIME_HOURS hours"
           echo "Start: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "End: $(date -u -d "@$END" '+%Y-%m-%d %H:%M:%S UTC')"
           echo "Monitor: $MONITOR_URL"
           echo ""
           
           HEARTBEAT_COUNT=0
+          NEXT_HEARTBEAT=$START
           
           while [ $(date +%s) -lt $END ]; do
             CURRENT=$(date +%s)
             ELAPSED=$((CURRENT - START))
             REMAINING=$((END - CURRENT))
             
-            # Hitung container status
-            RUNNING=$(docker ps --filter "name=r${{ matrix.runner }}_" --filter "status=running" -q | wc -l)
-            TOTAL=$(docker ps -a --filter "name=r${{ matrix.runner }}_" -q | wc -l)
-            
             # Kirim heartbeat setiap 5 menit (300 detik)
-            if (( ELAPSED % 300 == 0 )) || [ $HEARTBEAT_COUNT -eq 0 ]; then
+            if [ $CURRENT -ge $NEXT_HEARTBEAT ]; then
               HEARTBEAT_COUNT=$((HEARTBEAT_COUNT + 1))
+              
+              # Hitung container status
+              RUNNING=$(docker ps --filter "name=r${{ matrix.runner }}_" --filter "status=running" -q 2>/dev/null | wc -l)
+              TOTAL=$(docker ps -a --filter "name=r${{ matrix.runner }}_" -q 2>/dev/null | wc -l)
               
               echo "💓 Heartbeat #$HEARTBEAT_COUNT: Containers $RUNNING/$TOTAL | Elapsed: $((ELAPSED/60))m | Remaining: $((REMAINING/60))m"
               
@@ -549,9 +549,12 @@ jobs:
                   \"status\": \"running\",
                   \"timestamp\": \"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\"
                 }" > /dev/null 2>&1 || echo "⚠️ Heartbeat failed (non-critical)"
+              
+              # Set next heartbeat time (5 menit dari sekarang)
+              NEXT_HEARTBEAT=$((CURRENT + 300))
             fi
             
-            # Sleep 60 detik (heartbeat dikirim setiap 5 menit)
+            # Sleep 60 detik
             sleep 60
           done
           
@@ -666,7 +669,7 @@ jobs:
           
           TOTAL_RUNNERS=5
           SHARED_WALLETS=160
-          CONTAINERS_PER_WALLET=2
+          CONTAINERS_PER_WALLET=4
           TOTAL_CONTAINERS=$(( SHARED_WALLETS * CONTAINERS_PER_WALLET * TOTAL_RUNNERS ))
           
           # Count total API keys
