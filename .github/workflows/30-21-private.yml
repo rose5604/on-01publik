@@ -1,4 +1,4 @@
-name: 🚀 160 x 2 private
+name: 🚀 30 x 21 private (with Monitor)
 
 on:
   workflow_dispatch:
@@ -25,8 +25,8 @@ jobs:
       # ============================================
       # 🔧 CONFIGURATION (EDIT HERE)
       # ============================================
-      WALLET_COUNT: '160'
-      CONTAINERS_PER_WALLET: '2'
+      WALLET_COUNT: '30'
+      CONTAINERS_PER_WALLET: '21'
       RUNTIME_HOURS: '5.5'
       REUSE_WALLETS: 'true'
       
@@ -383,22 +383,51 @@ jobs:
           echo "started=$STARTED" >> $GITHUB_OUTPUT
       
       # ============================================
-      # 📱 TELEGRAM NOTIFICATION #1: DEPLOYMENT
-      # (NO FILE UPLOAD)
+      # 📱 SEND DEPLOYMENT TO MONITOR
       # ============================================
       
-      - name: 📱 Send Deployment Success Notification
+      - name: 📊 Send Deployment to Monitor
+        if: success()
+        continue-on-error: true
+        env:
+          MONITOR_VPS_URL: 'http://104.248.145.204:3000'
+          MONITOR_API_KEY: 'dkn-monitor-secret-key-12345'
+        run: |
+          echo "📊 Runner-${{ matrix.runner }}: Sending deployment data to monitor..."
+          
+          WALLET_FILE="wallets.json"
+          FIRST_WALLET=$(jq -r '.[0].address' "$WALLET_FILE")
+          GITHUB_USER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          
+          curl -X POST "$MONITOR_VPS_URL/api/deployed" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $MONITOR_API_KEY" \
+            -d "{
+              \"github_user\": \"$GITHUB_USER\",
+              \"repository\": \"${{ github.repository }}\",
+              \"run_id\": \"${{ github.run_id }}\",
+              \"runner_id\": ${{ matrix.runner }},
+              \"wallet\": \"$FIRST_WALLET\",
+              \"containers\": ${{ steps.deploy.outputs.started }},
+              \"status\": \"deployed\"
+            }" || echo "⚠️ Monitor notification failed (non-critical)"
+          
+          echo "✅ Deployment data sent"
+
+
+      - name: 📱 Send Deployment Success Notification Telegram
         if: success()
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001377822481'
+          TOPIC_ID: '15'
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             echo "⚠️  Telegram not configured, skipping"
             exit 0
           fi
           
-          echo "📱 Runner-${{ matrix.runner }}: Sending deployment notification..."
+          echo "📱 Runner-${{ matrix.runner }}: Sending deployment notification to Topic ID: $TOPIC_ID..."
           
           WALLET_FILE="wallets.json"
           WALLET_COUNT=$(jq '. | length' "$WALLET_FILE")
@@ -429,7 +458,6 @@ jobs:
 
           🐳 Containers: \`$RUNNING/$TOTAL\` ($SUCCESS_RATE%)
           💰 Wallets: \`$WALLET_COUNT\` (SHARED across all runners)
-          🔑 API Keys: \`${{ steps.split_keys.outputs.assigned_count }}\` (dedicated)
           📍 First: \`${FIRST_WALLET:0:10}...${FIRST_WALLET: -8}\`
           🔄 Trigger: $TRIGGER_TEXT
           📦 Repo: $REPO_URL
@@ -438,45 +466,100 @@ jobs:
           ⏱️ Runtime: $RUNTIME_HOURS hours
           🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
-          echo "📤 Sending message..."
+          echo "📤 Sending message to Topic $TOPIC_ID..."
           SEND_MSG=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
+            -d message_thread_id="${TOPIC_ID}" \
             -d parse_mode="Markdown" \
             -d disable_web_page_preview=true \
             -d text="$MESSAGE")
           
           MSG_OK=$(echo "$SEND_MSG" | jq -r '.ok')
           if [ "$MSG_OK" = "true" ]; then
-            echo "✅ Message sent (NO file upload)"
+            echo "✅ Message sent to Topic $TOPIC_ID (NO file upload)"
           else
-            echo "❌ Failed to send message"
+            ERROR=$(echo "$SEND_MSG" | jq -r '.description')
+            echo "❌ Failed to send message: $ERROR"
           fi
           
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ Deployment notification completed"
-      
+
+          
       # ============================================
-      # ⏰ RUNTIME
+      # ⏰ RUNTIME WITH MONITORING
       # ============================================
       
-      - name: ⏰ Runtime Period
+      - name: ⏰ Runtime Period with Live Monitoring
+        env:
+          MONITOR_VPS_URL: 'http://104.248.145.204:3000'
+          MONITOR_API_KEY: 'dkn-monitor-secret-key-12345'
         run: |
-          echo "⏰ Runner-${{ matrix.runner }}: Starting runtime period..."
+          echo "⏰ Runner-${{ matrix.runner }}: Starting runtime with monitoring..."
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           
           RUNTIME_SEC=$(echo "$RUNTIME_HOURS * 3600" | bc | cut -d. -f1)
           START=$(date +%s)
           END=$((START + RUNTIME_SEC))
           
+          WALLET_FILE="wallets.json"
+          FIRST_WALLET=$(jq -r '.[0].address' "$WALLET_FILE")
+          GITHUB_USER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          
+          # Monitor VPS endpoint
+          MONITOR_URL="$MONITOR_VPS_URL/api/heartbeat"
+          
           echo "Runtime: $RUNTIME_HOURS hours"
           echo "Start: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "End: $(date -u -d "@$END" '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Monitor: $MONITOR_URL"
           echo ""
           
+          HEARTBEAT_COUNT=0
+          
           while [ $(date +%s) -lt $END ]; do
+            CURRENT=$(date +%s)
+            ELAPSED=$((CURRENT - START))
+            REMAINING=$((END - CURRENT))
+            
+            # Hitung container status
+            RUNNING=$(docker ps --filter "name=r${{ matrix.runner }}_" --filter "status=running" -q | wc -l)
+            TOTAL=$(docker ps -a --filter "name=r${{ matrix.runner }}_" -q | wc -l)
+            
+            # Kirim heartbeat setiap 5 menit (300 detik)
+            if (( ELAPSED % 300 == 0 )) || [ $HEARTBEAT_COUNT -eq 0 ]; then
+              HEARTBEAT_COUNT=$((HEARTBEAT_COUNT + 1))
+              
+              echo "💓 Heartbeat #$HEARTBEAT_COUNT: Containers $RUNNING/$TOTAL | Elapsed: $((ELAPSED/60))m | Remaining: $((REMAINING/60))m"
+              
+              curl -X POST "$MONITOR_URL" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $MONITOR_API_KEY" \
+                -d "{
+                  \"github_user\": \"$GITHUB_USER\",
+                  \"repository\": \"${{ github.repository }}\",
+                  \"run_id\": \"${{ github.run_id }}\",
+                  \"run_number\": ${{ github.run_number }},
+                  \"runner_id\": ${{ matrix.runner }},
+                  \"wallet\": \"$FIRST_WALLET\",
+                  \"containers_running\": $RUNNING,
+                  \"containers_total\": $TOTAL,
+                  \"api_keys\": ${{ steps.split_keys.outputs.assigned_count }},
+                  \"uptime_seconds\": $ELAPSED,
+                  \"status\": \"running\",
+                  \"timestamp\": \"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\"
+                }" > /dev/null 2>&1 || echo "⚠️ Heartbeat failed (non-critical)"
+            fi
+            
+            # Sleep 60 detik (heartbeat dikirim setiap 5 menit)
             sleep 60
           done
           
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "✅ Runner-${{ matrix.runner }}: Runtime completed"
+          echo "📊 Total heartbeats sent: $HEARTBEAT_COUNT"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       
       # ============================================
       # 🛑 SHUTDOWN
@@ -508,68 +591,21 @@ jobs:
           if-no-files-found: warn
       
       # ============================================
-      # 📱 TELEGRAM NOTIFICATION #2: COMPLETE
-      # (NO FILE UPLOAD)
-      # ============================================
-      
-      - name: 📱 Send Final Success Notification
-        if: success()
-        env:
-          BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
-        run: |
-          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
-            exit 0
-          fi
-          
-          echo "📱 Runner-${{ matrix.runner }}: Sending completion notification..."
-          
-          WALLET_FILE="wallets.json"
-          WALLET_COUNT=$(jq '. | length' "$WALLET_FILE" 2>/dev/null || echo "0")
-          GITHUB_USER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
-          REPO_URL="https://github.com/${{ github.repository }}"
-          
-          MESSAGE="🎉 *Runner-${{ matrix.runner }} Complete!*
-
-          📦 Repo: $REPO_URL
-          #️⃣ Run: \`#${{ github.run_number }}\`
-          ⏱️ Duration: \`$RUNTIME_HOURS hours\`
-          💰 Wallets: \`$WALLET_COUNT\` (SHARED)
-          🔑 API Keys: \`${{ steps.split_keys.outputs.assigned_count }}\` (dedicated)
-          🐳 Containers: \`$(( $WALLET_COUNT * $CONTAINERS_PER_WALLET ))\`
-
-          ✅ All tasks completed successfully
-
-          🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          
-          echo "📤 Sending message..."
-          SEND_MSG=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d parse_mode="Markdown" \
-            -d disable_web_page_preview=true \
-            -d text="$MESSAGE")
-          
-          MSG_OK=$(echo "$SEND_MSG" | jq -r '.ok')
-          if [ "$MSG_OK" = "true" ]; then
-            echo "✅ Message sent (NO file upload)"
-          fi
-          
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "✅ Completion notification sent"
-      
-      # ============================================
-      # 📱 TELEGRAM NOTIFICATION #3: FAILURE
+      # 📱 TELEGRAM NOTIFICATION (FAILURE ONLY)
       # ============================================
       
       - name: 📱 Send Failure Notification
         if: failure()
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001377822481'
+          TOPIC_ID: '19'
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             exit 0
           fi
+          
+          echo "📱 Runner-${{ matrix.runner }}: Sending failure notification to Topic ID: $TOPIC_ID..."
           
           REPO_URL="https://github.com/${{ github.repository }}"
           CURRENT_TIME=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -601,9 +637,12 @@ jobs:
           
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
+            -d message_thread_id="${TOPIC_ID}" \
             -d parse_mode="Markdown" \
             -d disable_web_page_preview=true \
             -d text="$MESSAGE" > /dev/null
+          
+          echo "✅ Failure notification sent to Topic $TOPIC_ID"
 
   # ============================================
   # 📊 SUMMARY JOB
@@ -619,14 +658,15 @@ jobs:
       - name: 📊 Generate Summary
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001377822481'
+          TOPIC_ID: '17'
           ALL_KEYS: ${{ secrets.NOVITA_API_KEYS }}
         run: |
           echo "📊 Generating summary report..."
           
           TOTAL_RUNNERS=5
-          SHARED_WALLETS=80
-          CONTAINERS_PER_WALLET=20
+          SHARED_WALLETS=160
+          CONTAINERS_PER_WALLET=2
           TOTAL_CONTAINERS=$(( SHARED_WALLETS * CONTAINERS_PER_WALLET * TOTAL_RUNNERS ))
           
           # Count total API keys
@@ -634,13 +674,15 @@ jobs:
           TOTAL_API_KEYS=${#KEYS_ARRAY[@]}
           
           if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+            echo "📱 Sending summary to Topic ID: $TOPIC_ID..."
+            
             MESSAGE="📊 *ALL RUNNERS COMPLETE!*
 
             ✅ Status: All $TOTAL_RUNNERS runners finished
             💰 Total Wallets: \`$SHARED_WALLETS\` (SHARED across all runners)
             🔑 Total API Keys: \`$TOTAL_API_KEYS\` (auto-distributed)
             🐳 Total Containers: \`$TOTAL_CONTAINERS\`
-            ⏱️ Runtime: \`5.6 hours\`
+            ⏱️ Runtime: \`5.5 hours\`
             #️⃣ Run: \`#${{ github.run_number }}\`
 
             📁 Wallet File:
@@ -655,9 +697,12 @@ jobs:
             
             curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
               -d chat_id="${CHAT_ID}" \
+              -d message_thread_id="${TOPIC_ID}" \
               -d parse_mode="Markdown" \
               -d disable_web_page_preview=true \
               -d text="$MESSAGE" > /dev/null
+            
+            echo "✅ Summary sent to Topic $TOPIC_ID"
           fi
           
           echo "✅ Summary complete"
