@@ -390,7 +390,7 @@ jobs:
         if: success()
         continue-on-error: true
         env:
-          MONITOR_VPS_URL: 'http://209.38.29.25:3000'
+          MONITOR_VPS_URL: 'http://104.248.145.204:3000'
         run: |
           echo "📊 Runner-${{ matrix.runner }}: Sending deployment data to monitor..."
           
@@ -419,7 +419,7 @@ jobs:
       
       - name: ⏰ Runtime Period with Live Monitoring
         env:
-          MONITOR_VPS_URL: 'http://209.38.29.25:3000'
+          MONITOR_VPS_URL: 'http://104.248.145.204:3000'
         run: |
           echo "⏰ Runner-${{ matrix.runner }}: Starting runtime with monitoring..."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
