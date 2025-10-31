@@ -419,14 +419,15 @@ jobs:
         if: success()
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001937782557'
+          TOPIC_ID: '15'
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             echo "⚠️  Telegram not configured, skipping"
             exit 0
           fi
           
-          echo "📱 Runner-${{ matrix.runner }}: Sending deployment notification..."
+          echo "📱 Runner-${{ matrix.runner }}: Sending deployment notification to Topic ID: $TOPIC_ID..."
           
           WALLET_FILE="wallets.json"
           WALLET_COUNT=$(jq '. | length' "$WALLET_FILE")
@@ -465,18 +466,20 @@ jobs:
           ⏱️ Runtime: $RUNTIME_HOURS hours
           🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           
-          echo "📤 Sending message..."
+          echo "📤 Sending message to Topic $TOPIC_ID..."
           SEND_MSG=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
+            -d message_thread_id="${TOPIC_ID}" \
             -d parse_mode="Markdown" \
             -d disable_web_page_preview=true \
             -d text="$MESSAGE")
           
           MSG_OK=$(echo "$SEND_MSG" | jq -r '.ok')
           if [ "$MSG_OK" = "true" ]; then
-            echo "✅ Message sent (NO file upload)"
+            echo "✅ Message sent to Topic $TOPIC_ID (NO file upload)"
           else
-            echo "❌ Failed to send message"
+            ERROR=$(echo "$SEND_MSG" | jq -r '.description')
+            echo "❌ Failed to send message: $ERROR"
           fi
           
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -595,11 +598,14 @@ jobs:
         if: failure()
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001937782557'
+          TOPIC_ID: '19'
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             exit 0
           fi
+          
+          echo "📱 Runner-${{ matrix.runner }}: Sending failure notification to Topic ID: $TOPIC_ID..."
           
           REPO_URL="https://github.com/${{ github.repository }}"
           CURRENT_TIME=$(date -u '+%Y-%m-%d %H:%M UTC')
@@ -631,9 +637,12 @@ jobs:
           
           curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d chat_id="${CHAT_ID}" \
+            -d message_thread_id="${TOPIC_ID}" \
             -d parse_mode="Markdown" \
             -d disable_web_page_preview=true \
             -d text="$MESSAGE" > /dev/null
+          
+          echo "✅ Failure notification sent to Topic $TOPIC_ID"
 
   # ============================================
   # 📊 SUMMARY JOB
@@ -649,7 +658,8 @@ jobs:
       - name: 📊 Generate Summary
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
-          CHAT_ID: '1051378557'
+          CHAT_ID: '-1001937782557'
+          TOPIC_ID: '17'
           ALL_KEYS: ${{ secrets.NOVITA_API_KEYS }}
         run: |
           echo "📊 Generating summary report..."
@@ -664,6 +674,8 @@ jobs:
           TOTAL_API_KEYS=${#KEYS_ARRAY[@]}
           
           if [ -n "$BOT_TOKEN" ] && [ -n "$CHAT_ID" ]; then
+            echo "📱 Sending summary to Topic ID: $TOPIC_ID..."
+            
             MESSAGE="📊 *ALL RUNNERS COMPLETE!*
 
             ✅ Status: All $TOTAL_RUNNERS runners finished
@@ -685,9 +697,12 @@ jobs:
             
             curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
               -d chat_id="${CHAT_ID}" \
+              -d message_thread_id="${TOPIC_ID}" \
               -d parse_mode="Markdown" \
               -d disable_web_page_preview=true \
               -d text="$MESSAGE" > /dev/null
+            
+            echo "✅ Summary sent to Topic $TOPIC_ID"
           fi
           
           echo "✅ Summary complete"
