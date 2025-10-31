@@ -391,6 +391,7 @@ jobs:
         continue-on-error: true
         env:
           MONITOR_VPS_URL: 'http://104.248.145.204:3000'
+          MONITOR_API_KEY: 'dkn-monitor-secret-key-12345'
         run: |
           echo "📊 Runner-${{ matrix.runner }}: Sending deployment data to monitor..."
           
@@ -400,7 +401,7 @@ jobs:
           
           curl -X POST "$MONITOR_VPS_URL/api/deployed" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${{ secrets.MONITOR_API_KEY }}" \
+            -H "Authorization: Bearer $MONITOR_API_KEY" \
             -d "{
               \"github_user\": \"$GITHUB_USER\",
               \"repository\": \"${{ github.repository }}\",
@@ -420,6 +421,7 @@ jobs:
       - name: ⏰ Runtime Period with Live Monitoring
         env:
           MONITOR_VPS_URL: 'http://104.248.145.204:3000'
+          MONITOR_API_KEY: 'dkn-monitor-secret-key-12345'
         run: |
           echo "⏰ Runner-${{ matrix.runner }}: Starting runtime with monitoring..."
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -460,7 +462,7 @@ jobs:
               
               curl -X POST "$MONITOR_URL" \
                 -H "Content-Type: application/json" \
-                -H "Authorization: Bearer ${{ secrets.MONITOR_API_KEY }}" \
+                -H "Authorization: Bearer $MONITOR_API_KEY" \
                 -d "{
                   \"github_user\": \"$GITHUB_USER\",
                   \"repository\": \"${{ github.repository }}\",
