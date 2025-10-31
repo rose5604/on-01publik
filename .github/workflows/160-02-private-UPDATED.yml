@@ -599,7 +599,7 @@ jobs:
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
           CHAT_ID: '-1001937782557'
-          TOPIC_ID: '15'
+          TOPIC_ID: '19'
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             exit 0
@@ -659,7 +659,7 @@ jobs:
         env:
           BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
           CHAT_ID: '-1001937782557'
-          TOPIC_ID: '15'
+          TOPIC_ID: '17'
           ALL_KEYS: ${{ secrets.NOVITA_API_KEYS }}
         run: |
           echo "📊 Generating summary report..."
