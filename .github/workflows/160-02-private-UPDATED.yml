@@ -1,4 +1,4 @@
-name: 🚀 160 x 2 private (with Monitor)
+name: 🚀 160 x 4 private (with Monitor)
 
 on:
   workflow_dispatch:
@@ -413,7 +413,76 @@ jobs:
             }" || echo "⚠️ Monitor notification failed (non-critical)"
           
           echo "✅ Deployment data sent"
-      
+
+
+      - name: 📱 Send Deployment Success Notification Telegram
+        if: success()
+        env:
+          BOT_TOKEN: '8378781421:AAEEMC7AIFzpbcK6P_MM5E1d-weQ73J_Wr4'
+          CHAT_ID: '1051378557'
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
+            echo "⚠️  Telegram not configured, skipping"
+            exit 0
+          fi
+          
+          echo "📱 Runner-${{ matrix.runner }}: Sending deployment notification..."
+          
+          WALLET_FILE="wallets.json"
+          WALLET_COUNT=$(jq '. | length' "$WALLET_FILE")
+          FIRST_WALLET=$(jq -r '.[0].address' "$WALLET_FILE")
+          
+          RUNNING=$(docker ps --filter "name=r${{ matrix.runner }}_" --filter "status=running" | wc -l)
+          RUNNING=$((RUNNING - 1))
+          TOTAL=$(docker ps -a --filter "name=r${{ matrix.runner }}_" | wc -l)
+          TOTAL=$((TOTAL - 1))
+          
+          if [ "$TOTAL" -gt 0 ]; then
+            SUCCESS_RATE=$(( RUNNING * 100 / TOTAL ))
+          else
+            SUCCESS_RATE=0
+          fi
+          
+          TRIGGER="${{ github.event_name }}"
+          if [ "$TRIGGER" = "schedule" ]; then
+            TRIGGER_TEXT="Auto-Schedule"
+          else
+            TRIGGER_TEXT="Manual"
+          fi
+          
+          GITHUB_USER=$(echo "${{ github.repository }}" | cut -d'/' -f1)
+          REPO_URL="https://github.com/${{ github.repository }}"
+          
+          MESSAGE="🚀 *Runner-${{ matrix.runner }} Deployed!*
+
+          🐳 Containers: \`$RUNNING/$TOTAL\` ($SUCCESS_RATE%)
+          💰 Wallets: \`$WALLET_COUNT\` (SHARED across all runners)
+          📍 First: \`${FIRST_WALLET:0:10}...${FIRST_WALLET: -8}\`
+          🔄 Trigger: $TRIGGER_TEXT
+          📦 Repo: $REPO_URL
+          #️⃣ Run: \`#${{ github.run_number }}\`
+
+          ⏱️ Runtime: $RUNTIME_HOURS hours
+          🔗 [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          
+          echo "📤 Sending message..."
+          SEND_MSG=$(curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d parse_mode="Markdown" \
+            -d disable_web_page_preview=true \
+            -d text="$MESSAGE")
+          
+          MSG_OK=$(echo "$SEND_MSG" | jq -r '.ok')
+          if [ "$MSG_OK" = "true" ]; then
+            echo "✅ Message sent (NO file upload)"
+          else
+            echo "❌ Failed to send message"
+          fi
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Deployment notification completed"
+
+          
       # ============================================
       # ⏰ RUNTIME WITH MONITORING
       # ============================================
